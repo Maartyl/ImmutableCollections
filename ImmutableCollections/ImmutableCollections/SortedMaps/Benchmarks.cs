@@ -58,7 +58,7 @@ namespace ImmutableCollections.SortedMaps
             Benchmark.Time("HAMT", () =>
             {
                 hamt = HashMaps.HAMT<int, int>.Empty;
-                for (int i = 0; i < size; i++) hamt = hamt.Set(i, i);
+                for (int i = 0; i < size; i++) hamt = hamt.Assoc(i, i);
             });
 
             Console.WriteLine("=========================== Memory ===========================");
@@ -91,7 +91,7 @@ namespace ImmutableCollections.SortedMaps
 
             Benchmark.Memory("HAMT", () =>
             {
-                for (int i = 0; i < size; i++) hamt = hamt.Set(i, i);
+                for (int i = 0; i < size; i++) hamt = hamt.Assoc(i, i);
             });
 
 
@@ -151,7 +151,7 @@ namespace ImmutableCollections.SortedMaps
 
             Benchmark.Time("HAMT", () =>
             {
-                for (int i = 0; i < size; i++) hamt = hamt.Set((i * 234) % size, i);
+                for (int i = 0; i < size; i++) hamt = hamt.Assoc((i * 234) % size, i);
             });
         }
     }
