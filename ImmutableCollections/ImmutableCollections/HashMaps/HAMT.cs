@@ -151,8 +151,9 @@ namespace ImmutableCollections.HashMaps {
           children[0].Init2(kv1, hash1, kv2, hash2);
         } else {
           entriesbitmap = bit1 | bit2;
-          //if didn't subtract: if last bit: should be /after/ the other BUT: will be negative number: will flip order
-          entries = (bit1-int.MaxValue) < (bit2-int.MaxValue) ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
+          //if didn't use uint: if last bit set (negative int): should be /after/ the other (but I'm using <): would flip order
+          //it took me a good while to find this bug...
+          entries = unchecked((uint)bit1/*-int.MaxValue*/) < unchecked((uint)bit2/*-int.MaxValue*/) ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
         }
       }
 
