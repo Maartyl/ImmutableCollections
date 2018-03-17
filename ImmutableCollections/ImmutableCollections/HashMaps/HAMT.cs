@@ -69,6 +69,8 @@ namespace ImmutableCollections.HashMaps {
       // - if I put 35 to Bucket: then each in static ctor subtracts 5 -> all will know their depth.
       // - this should just return the static field (that coulnd't be directly part of interface...)
       int GetNodeDepth();
+
+      void DebugInspectPrint();
     }
 
     struct TrieNode<Child> : IHashMap where Child : IHashMap, new() {
@@ -149,7 +151,8 @@ namespace ImmutableCollections.HashMaps {
           children[0].Init2(kv1, hash1, kv2, hash2);
         } else {
           entriesbitmap = bit1 | bit2;
-          entries = bit1 < bit2 ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
+          //if didn't subtract: if last bit: should be /after/ the other BUT: will be negative number: will flip order
+          entries = (bit1-int.MaxValue) < (bit2-int.MaxValue) ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
         }
       }
 
@@ -157,7 +160,8 @@ namespace ImmutableCollections.HashMaps {
         return depth;
       }
 
-      static readonly int depth = default(Child).GetNodeDepth() - 5; //see GetNodeDepth in interface for explanation
+      static readonly int depth = default(Child).GetNodeDepth() - 5;
+      //see GetNodeDepth in interface for explanation
 
       static int ComputeBit(int hash) {
         return 1 << ((hash >> depth) & 0x01F);
@@ -174,6 +178,54 @@ namespace ImmutableCollections.HashMaps {
         x = ((x + (x >> 4) & 0xF0F0F0F) * 0x1010101) >> 24; // count
         return x;
       }
+
+      #region debug
+
+      void dbgLn(string s) {
+        if(s == null)
+          s = "";
+        
+        var indent = new string(' ', depth / 5);
+
+        Console.Write(indent);
+        Console.WriteLine(s.Replace("\n", "\n" + indent));
+      }
+
+      public void DebugInspectPrint() {
+        if(entriesbitmap != 0) {
+          dbgLn("entries " + dbgHash(entriesbitmap));
+        } else {
+          dbgLn("entries none");
+        }
+
+        if(entries != null)
+          foreach(var e in entries) {
+            dbgLn("." + dbgHash(hashOf(e.Key)) + " ; " + e.Key);
+          }
+
+        if(childrenbitmap != 0) {
+          dbgLn("children " + dbgHash(childrenbitmap));
+        } else {
+          dbgLn("children none");
+        }
+
+        if(children != null) {
+//          foreach(var c in children) {
+//            dbgLn("child");
+//            c.DebugInspectPrint();
+//          }
+//
+          for(int i = 0; i < 32; i++) {
+            var bit = (1 << i);
+            if((bit & childrenbitmap) != 0) {
+              dbgLn("child " + binI5(i));
+              children[ComputeIndex(bit, childrenbitmap)].DebugInspectPrint();
+            }
+          }
+        }
+      }
+
+      #endregion
     }
 
     struct Bucket : IHashMap {
@@ -217,6 +269,40 @@ namespace ImmutableCollections.HashMaps {
           ? entries.Insert(0, kvNew) //add ;; also to start: doesn't matter and last inserted might be most likely to be searched for
           : entries.CopyAndSet(indexToReplace, kvNew);
       }
+
+      public void DebugInspectPrint() {
+        var len = 0;
+        if(entries != null)
+          len = entries.Length;
+        
+        dbgLn("bucket #" + len); 
+
+        foreach(var e in entries) {
+          dbgLn("" + e.Key);
+        }
+      }
+
+      void dbgLn(string s) {
+        if(s == null)
+          s = "";
+
+        var indent = new string(' ', 35 / 5);
+
+        Console.Write(indent);
+        Console.WriteLine(s.Replace("\n", "\n" + indent));
+      }
+    }
+
+    static string dbgHash(int h) {
+      var bin = Convert.ToString(h, 2);
+      return new string('0', 32 - bin.Length) + bin + " " + h;
+    }
+
+    static string binI5(int h) {
+      var bin = Convert.ToString(h, 2);
+      if(bin.Length >= 5)
+        return bin;
+      return new string('0', 5 - bin.Length) + bin;
     }
 
     public struct TrieMap {
@@ -233,6 +319,9 @@ namespace ImmutableCollections.HashMaps {
         return self;
       }
 
+      public void DebugInspectPrint() {
+        trie.DebugInspectPrint();
+      }
 
     }
 
@@ -244,14 +333,43 @@ namespace ImmutableCollections.HashMaps {
       var h = HAMT<int, int>.Empty;
 
 
-      const int size = 4; //100000
-      const int offset = 939997; //9999999 works fine again... ;; 999999 many broken
+      const int size = 400000; //100000
+     // const int offset = 939997; //9999999 works fine again... ;; 999999 many broken
+      const int offset = 941000; //9999999 works fine again... ;; 999999 many broken
       // 939999 -- only 2 swapped;; other is: 940031
       //11100101011111011111
       //11100101011111111111
 
-      for(int i = (offset + 0); i < (offset + 10 * size); i++)
+      for(int i = (offset + 0); i < (offset + 10 * size); i++) {
         h = h.Assoc(i, i);
+
+        int v;
+        if(!h.TryGetValue(i, out v)) {
+          Console.WriteLine("E1: {0} has no value", i);
+
+          h.DebugInspectPrint();
+
+          var hx = h.Assoc(i, i);
+
+          Console.WriteLine("--------------e: Second of {0}------------", i);
+
+          hx.DebugInspectPrint();
+
+          if(hx.TryGetValue(i, out v)) {
+            Console.WriteLine("E1: {0} after second assoc: {1}", i, v);
+          } else {
+            Console.WriteLine("E1: {0} has no value even after second Assoc", i);
+          }
+
+          Console.WriteLine("E1: {0} has no value", i);
+          return; //debug
+
+          continue;
+        }
+      }
+
+//      h.DebugInspectPrint();
+//      return;
 
       for(int i = (offset + 0); i < (offset + 5 * size); i++) {
         h = h.Assoc(i, -i);
@@ -261,12 +379,12 @@ namespace ImmutableCollections.HashMaps {
         int v;
         if(!h.TryGetValue(i, out v)) {
           Console.WriteLine("Error: {0} has no value", i);
-//
-//          if(h.Assoc(i, i).TryGetValue(i, out v)) {
-//            Console.WriteLine("Error: {0} after second assoc: {1}", i, v);
-//          } else {
-//            Console.WriteLine("Error: {0} has no value even after second Assoc", i);
-//          }
+
+          if(h.Assoc(i, i).TryGetValue(i, out v)) {
+            Console.WriteLine("Error: {0} after second assoc: {1}", i, v);
+          } else {
+            Console.WriteLine("Error: {0} has no value even after second Assoc", i);
+          }
           continue;
         }
         if((i < (offset + 5 * size) && v != -i) || (i >= (offset + 5 * size) && v != i))
