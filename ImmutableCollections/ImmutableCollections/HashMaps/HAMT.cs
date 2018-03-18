@@ -2,6 +2,30 @@
 using System.Collections.Generic;
 using Maa.Common;
 
+/*
+The MIT License (MIT)
+
+Copyright (c) 2015 Jules Jacobs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+
 namespace Maa.Data {
 
   //represents immutable hash map
@@ -46,16 +70,67 @@ namespace Maa.Data {
   }
 
   struct HAMT<K, V> {
+    TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
+
+    #region API
+
+    //short bracket notation for most common operations
+    public Opt<V> this[K key]{ get { return ValueAt(key); } }
+    public HAMT<K, V> this[K key, V value]{ get { return Assoc(key, value); } }
+
+    public bool TryGetValue(K key, out V value) {
+      return trie.TryGetValue(key, hashOf(key), out value);
+    }
+
+    public Opt<V> ValueAt(K key) {
+      V v;
+      return TryGetValue(key, out v) ? v.Some() : Opt.NoneAny;
+    }
+
+    public HAMT<K, V> Assoc(K key, V value) {
+      var self = this;
+
+      self.trie.UpdateAssoc(new KeyValuePair<K, V>(key, value), hashOf(key));
+      return self;
+    }
+
+    public HAMT<K, V> Dissoc(K key) {
+      var self = this;
+
+      var h = hashOf(key);
+      var replace = self.trie.UpdateDissoc(key, h);
+      if(replace) { //only top node can contain single entery - tried to replace itself, but no higher level
+        self = Empty;
+        self.trie.UpdateAssoc(replace.ValueOrDefault, h);
+      }
+
+      return self;
+    }
+
+    internal void DebugInspectPrint() {
+      trie.DebugInspectPrint();
+    }
+
+    public IEnumerable<KeyValuePair<K,V>> Enumerate(){
+      return trie.Enumerate();
+    }
+
+    ///struct: same as new
+    public static readonly HAMT<K, V> Empty = new HAMT<K, V>();
+
+    #endregion
+
+    #region implementation
+
     static readonly Func<K, K, bool> eq = EqualityComparer<K>.Default.Equals;
 
     static int hashOf(K v) {
+      // Analysis disable once CompareNonConstrainedGenericWithNull
       return v == null ? 0 : v.GetHashCode();
     }
 
     // TODO:
-    //   optimize copying
-    //   remove depth parameter
-    //   try inlining bit calculations
+    //   probably not: try inlining bit calculations
     interface IHashTrieNode {
       bool TryGetValue(K key, int hash, out V value);
 
@@ -399,56 +474,17 @@ namespace Maa.Data {
       //point of this is partially for safety, but mainly to assure it gets evaluated before anything else:
       // - thus initialization not checked during actual algorithm
       // -- I don't think it would, but adding this does not hurt
-      if(Empty.RootNodeDepth != 0)
-        throw new InvalidProgramException("TrieMap top level NodeDepth must be 0; is: " + Empty.RootNodeDepth);
+
+      if(Empty.trie.GetNodeDepth() != 0)
+        throw new InvalidProgramException("TrieMap top level NodeDepth must be 0; is: " + Empty.trie.GetNodeDepth());
     }
 
-    public struct TrieMap {
-      internal int RootNodeDepth{ get { return trie.GetNodeDepth(); } }
-
-      TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
-
-      public bool TryGetValue(K key, out V value) {
-        return trie.TryGetValue(key, hashOf(key), out value);
-      }
-
-      public Opt<V> ValueAt(K key) {
-        V v;
-        return TryGetValue(key, out v) ? v.Some() : Opt.NoneAny;
-      }
-
-      public TrieMap Assoc(K key, V value) {
-        var self = this;
-
-        self.trie.UpdateAssoc(new KeyValuePair<K, V>(key, value), hashOf(key));
-        return self;
-      }
-
-      public TrieMap Dissoc(K key) {
-        var self = this;
-
-        var h = hashOf(key);
-        var replace = self.trie.UpdateDissoc(key, h);
-        if(replace) { //only top node can contain single entery - tried to replace itself, but no higher level
-          self = Empty;
-          self.trie.UpdateAssoc(replace.ValueOrDefault, h);
-        }
-
-        return self;
-      }
-
-      public void DebugInspectPrint() {
-        trie.DebugInspectPrint();
-      }
-    }
-
-    public static readonly TrieMap Empty = new TrieMap();
+    #endregion
   }
 
   public struct Test {
     public static void Run() {
       var h = HAMT<int, int>.Empty;
-
 
       const int size = 40; //100000
       // const int offset = 939997; //9999999 works fine again... ;; 999999 many broken
@@ -487,6 +523,8 @@ namespace Maa.Data {
 
 //      h.DebugInspectPrint();
 //      return;
+
+      var _ = h[5, 8][6, 7][5].ValueOrDefault;
 
       for(int i = (offset + 0); i < (offset + 5 * size); i++) {
         h = h.Assoc(i, -i);
