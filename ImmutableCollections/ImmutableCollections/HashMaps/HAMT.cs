@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Maa.Common;
 
-namespace ImmutableCollections.HashMaps {
+namespace Maa.Data {
 
   //represents immutable hash map
   // - abstract class, so I can define general operators on it
@@ -56,12 +56,18 @@ namespace ImmutableCollections.HashMaps {
     //   optimize copying
     //   remove depth parameter
     //   try inlining bit calculations
-    interface IHashMap {
+    interface IHashTrieNode {
       bool TryGetValue(K key, int hash, out V value);
 
       void UpdateAssoc(KeyValuePair<K,V> kv, int hash);
 
+      //returns: none -> keep child; KV -> replace child with entry (only 1 entry in subtree left)
+      // - if KV: you must replace: cannot assume it's updated to only hold one
+      Opt<KeyValuePair<K,V>> UpdateDissoc(K k, int hash);
+
       void Init2(KeyValuePair<K,V> kv1, int hash1, KeyValuePair<K,V> kv2, int hash2);
+
+      IEnumerable<KeyValuePair<K,V>> Enumerate();
 
 
       //TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
@@ -73,7 +79,7 @@ namespace ImmutableCollections.HashMaps {
       void DebugInspectPrint();
     }
 
-    struct TrieNode<Child> : IHashMap where Child : IHashMap, new() {
+    struct TrieNode<Child> : IHashTrieNode where Child : IHashTrieNode, new() {
       int childrenbitmap;
       int entriesbitmap;
 
@@ -108,38 +114,90 @@ namespace ImmutableCollections.HashMaps {
           int i = ComputeIndex(bit, entriesbitmap);
           var ent = entries[i];
           if(eq(ent.Key, kv.Key)) {
-            //orig // - YUP: I tested it: I noticed right: it was wrong - did mtate original map
+            //orig // - YUP: I tested it: I noticed right: it was wrong - did mutate original map
             //entries[i] = new KeyValuePair<K,V>(key, value);
-
-            //maa -- update copied structure; but not the original array
-            entries = entries.CopyAndSet(i, kv);
+            entries = entries.CopySetAt(i, kv);
           } else {
             int j = 0;
             if(children == null)
               children = new Child[1];
             else {
               j = ComputeIndex(bit, childrenbitmap);
-              children = children.Insert(j, new Child());
+              children = children.CopyInsertAt(j, new Child());
             }
             children[j].Init2(kv, hash, ent, hashOf(ent.Key));
-            entries = entries.Remove(i);
-            childrenbitmap = childrenbitmap | bit;
-            entriesbitmap = entriesbitmap & ~bit;
+            entries = entries.CopyRemoveAt(i);
+            childrenbitmap |= bit;
+            entriesbitmap &= ~bit;
           }
         } else {
+          entriesbitmap |= bit; //why is this no different? what is correct? ...
+          // - must match index I'm looking for, so...
+          // OOH! it deoes NOT matter: only computes from bits LOWER than bit, so if bit set or not doesn't matter...
+          // - whow, that's ... pretty cool, actually...
           if(entries == null)
             entries = new[] { kv };
           else
-            entries = entries.Insert(ComputeIndex(bit, entriesbitmap), kv);
-          entriesbitmap = entriesbitmap | bit;
+            entries = entries.CopyInsertAt(ComputeIndex(bit, entriesbitmap), kv);
+          //entriesbitmap |= bit;
         }
       }
 
-      public bool UpdateDissoc(K key, int hash, int depth) {
-        //TODO: return value: keep subtree?
-        // - actually: should return Opt<KV> - (None -> keep subtree) (KV -> replace subtree with KV)
-        // - first things first: move to Common and make it depend on Opt etc...
-        return false;
+      public Opt<KeyValuePair<K,V>> UpdateDissoc(K key, int hash) {
+        int bit = ComputeBit(hash);
+        if((bit & childrenbitmap) != 0) {
+          var i = ComputeIndex(bit, childrenbitmap);
+          var tmp = children[i];
+          var replace = tmp.UpdateDissoc(key, hash);
+          if(replace) {
+            if(bit == childrenbitmap && entriesbitmap == 0)
+              return replace; //was sole child and no entries: replace myself
+            else {
+              //collapse of child into entry
+
+              if(bit == childrenbitmap) {
+                childrenbitmap = 0;
+                children = null;
+              } else {
+                childrenbitmap &= ~bit;
+                children = children.CopyRemoveAt(i);
+              }
+
+              entriesbitmap |= bit;
+              entries = entries.CopyInsertAt(ComputeIndex(bit, entriesbitmap), replace.ValueOrDefault);
+              return Opt.NoneAny; //keep me
+            }
+          } else {
+            //keep tmp as child
+            children = children.CopySetAt(i, tmp);
+            return Opt.NoneAny; //keep me
+          }
+        } else if((bit & entriesbitmap) != 0) {
+          var i = ComputeIndex(bit, entriesbitmap);
+          var kv = entries[i];
+          if(eq(kv.Key, key)) {
+            if(bit != entriesbitmap) { //common case: multiple entries, just remove
+              entriesbitmap &= ~bit;
+              entries = entries.CopyRemoveAt(i);
+              return Opt.NoneAny; //keep me
+            } else { //is sole entry
+              if(childrenbitmap == 0) { //no children
+                return kv; //replace myself
+              } else {
+                entriesbitmap = 0;
+                entries = null;
+                return Opt.NoneAny; //keep me
+              }
+            }
+          } else {
+            //found hash, but not matching key: cannot be collision (would be in bucket) so key not present
+            //nothing to remove -> nothing to do; stay as I am
+            return Opt.NoneAny; //keep me
+          }
+        } else { //hash not found in either
+          //nothing to remove -> nothing to do; stay as I am
+          return Opt.NoneAny; //keep me
+        }
       }
 
       public void Init2(KeyValuePair<K,V> kv1, int hash1, KeyValuePair<K,V> kv2, int hash2) {
@@ -153,16 +211,27 @@ namespace ImmutableCollections.HashMaps {
           entriesbitmap = bit1 | bit2;
           //if didn't use uint: if last bit set (negative int): should be /after/ the other (but I'm using <): would flip order
           //it took me a good while to find this bug...
-          entries = unchecked((uint)bit1/*-int.MaxValue*/) < unchecked((uint)bit2/*-int.MaxValue*/) ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
+          entries = unchecked((uint)bit1) < unchecked((uint)bit2) ? new[] { kv1, kv2 } : new[] { kv2, kv1 };
         }
+      }
+
+      public IEnumerable<KeyValuePair<K,V>> Enumerate() {
+        if(entries != null)
+          foreach(var e in entries)
+            yield return e;
+  
+        if(children != null) //there's surely a faster way to do this, but this one is fine for now
+          foreach(var c in children)
+            foreach(var e in c.Enumerate())
+              yield return e;
       }
 
       public int GetNodeDepth() {
         return depth;
       }
 
-      static readonly int depth = default(Child).GetNodeDepth() - 5;
       //see GetNodeDepth in interface for explanation
+      static readonly int depth = default(Child).GetNodeDepth() - 5;
 
       static int ComputeBit(int hash) {
         return 1 << ((hash >> depth) & 0x01F);
@@ -182,7 +251,7 @@ namespace ImmutableCollections.HashMaps {
 
       #region debug
 
-      void dbgLn(string s) {
+      static void dbgLn(string s) {
         if(s == null)
           s = "";
         
@@ -200,22 +269,15 @@ namespace ImmutableCollections.HashMaps {
         }
 
         if(entries != null)
-          foreach(var e in entries) {
+          foreach(var e in entries)
             dbgLn("." + dbgHash(hashOf(e.Key)) + " ; " + e.Key);
-          }
 
-        if(childrenbitmap != 0) {
+        if(childrenbitmap != 0)
           dbgLn("children " + dbgHash(childrenbitmap));
-        } else {
+        else
           dbgLn("children none");
-        }
 
-        if(children != null) {
-//          foreach(var c in children) {
-//            dbgLn("child");
-//            c.DebugInspectPrint();
-//          }
-//
+        if(children != null)
           for(int i = 0; i < 32; i++) {
             var bit = (1 << i);
             if((bit & childrenbitmap) != 0) {
@@ -223,13 +285,12 @@ namespace ImmutableCollections.HashMaps {
               children[ComputeIndex(bit, childrenbitmap)].DebugInspectPrint();
             }
           }
-        }
       }
 
       #endregion
     }
 
-    struct Bucket : IHashMap {
+    struct Bucket : IHashTrieNode {
       public int GetNodeDepth() {
         return 35; //see interface for explanation -- allows each node type to determine it's depth.
       }
@@ -252,23 +313,52 @@ namespace ImmutableCollections.HashMaps {
       }
 
       public void UpdateAssoc(KeyValuePair<K, V> kvNew, int hash) {
-        if(entries == null) {
+        if(entries == null) { //not possible inside tree; only when Bucket used for small maps
           entries = new []{ kvNew };
           return;
         }
-
-        var len = entries.Length;
-        var indexToReplace = -1;
-        for(int i = 0; i < len; i++) {
-          if(eq(entries[i].Key, kvNew.Key)) {
-            indexToReplace = i;
-            break;
-          }
-        }
+          
+        var indexToReplace = findIndex(kvNew.Key);
 
         entries = indexToReplace < 0 
-          ? entries.Insert(0, kvNew) //add ;; also to start: doesn't matter and last inserted might be most likely to be searched for
-          : entries.CopyAndSet(indexToReplace, kvNew);
+          ? entries.CopyInsertAt(0, kvNew) //add ;; also to start: doesn't matter and last inserted might be most likely to be searched for
+          : entries.CopySetAt(indexToReplace, kvNew);
+      }
+
+      public Opt<KeyValuePair<K,V>> UpdateDissoc(K k, int hash) {
+        if(entries == null)
+          return Opt.NoneAny; //not possible inside tree; only when Bucket used for small maps
+
+        var indexToRemove = findIndex(k);
+
+        if(indexToRemove < 0)
+          return Opt.NoneAny; //not found: keep me as I am
+
+        if(entries.Length == 2)
+          return entries[indexToRemove == 0 ? 1 : 0]; //return other than removed to replace self with
+
+        if(entries.Length == 1) { //not possible inside tree; only when Bucket used for small maps
+          entries = null; //was single: removed to null
+          return Opt.NoneAny;
+        }
+
+        entries = entries.CopyRemoveAt(indexToRemove);
+        return Opt.NoneAny;
+      }
+
+      int findIndex(K k) {
+        //ASSUMPTION: entries != null
+
+        var len = entries.Length;
+        for(int i = 0; i < len; i++)
+          if(eq(entries[i].Key, k))
+            return i;
+
+        return -1;
+      }
+
+      public IEnumerable<KeyValuePair<K,V>> Enumerate() {
+        return entries ?? System.Linq.Enumerable.Empty<KeyValuePair<K,V>>();
       }
 
       public void DebugInspectPrint() {
@@ -278,12 +368,11 @@ namespace ImmutableCollections.HashMaps {
         
         dbgLn("bucket #" + len); 
 
-        foreach(var e in entries) {
+        foreach(var e in entries)
           dbgLn("" + e.Key);
-        }
       }
 
-      void dbgLn(string s) {
+      static void dbgLn(string s) {
         if(s == null)
           s = "";
 
@@ -306,11 +395,26 @@ namespace ImmutableCollections.HashMaps {
       return new string('0', 5 - bin.Length) + bin;
     }
 
+    static HAMT() {
+      //point of this is partially for safety, but mainly to assure it gets evaluated before anything else:
+      // - thus initialization not checked during actual algorithm
+      // -- I don't think it would, but adding this does not hurt
+      if(Empty.RootNodeDepth != 0)
+        throw new InvalidProgramException("TrieMap top level NodeDepth must be 0; is: " + Empty.RootNodeDepth);
+    }
+
     public struct TrieMap {
+      internal int RootNodeDepth{ get { return trie.GetNodeDepth(); } }
+
       TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
 
       public bool TryGetValue(K key, out V value) {
         return trie.TryGetValue(key, hashOf(key), out value);
+      }
+
+      public Opt<V> ValueAt(K key) {
+        V v;
+        return TryGetValue(key, out v) ? v.Some() : Opt.NoneAny;
       }
 
       public TrieMap Assoc(K key, V value) {
@@ -320,10 +424,22 @@ namespace ImmutableCollections.HashMaps {
         return self;
       }
 
+      public TrieMap Dissoc(K key) {
+        var self = this;
+
+        var h = hashOf(key);
+        var replace = self.trie.UpdateDissoc(key, h);
+        if(replace) { //only top node can contain single entery - tried to replace itself, but no higher level
+          self = Empty;
+          self.trie.UpdateAssoc(replace.ValueOrDefault, h);
+        }
+
+        return self;
+      }
+
       public void DebugInspectPrint() {
         trie.DebugInspectPrint();
       }
-
     }
 
     public static readonly TrieMap Empty = new TrieMap();
@@ -334,8 +450,8 @@ namespace ImmutableCollections.HashMaps {
       var h = HAMT<int, int>.Empty;
 
 
-      const int size = 400000; //100000
-     // const int offset = 939997; //9999999 works fine again... ;; 999999 many broken
+      const int size = 40; //100000
+      // const int offset = 939997; //9999999 works fine again... ;; 999999 many broken
       const int offset = 941000; //9999999 works fine again... ;; 999999 many broken
       // 939999 -- only 2 swapped;; other is: 940031
       //11100101011111011111
@@ -365,7 +481,7 @@ namespace ImmutableCollections.HashMaps {
           Console.WriteLine("E1: {0} has no value", i);
           return; //debug
 
-          continue;
+          //continue;
         }
       }
 
@@ -404,7 +520,7 @@ namespace ImmutableCollections.HashMaps {
     public  static void Run2() {
       var h = HAMT<int, int>.Empty;
 
-      var last = 31;
+      const int last = 31;
       h = h.Assoc(last + (1 << 5), 42 + (1 << 5));
       // h = h.Assoc(42 + (2 << 5), 42 +( 2 << 5));
       h = h.Assoc(last + (3 << 5), 42 + (3 << 5));

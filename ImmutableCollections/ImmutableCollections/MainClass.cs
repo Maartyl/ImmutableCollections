@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Maa.Data;
 
 namespace ImmutableCollections {
   public class Benchmark {
@@ -97,15 +98,15 @@ namespace ImmutableCollections {
     static void simpleHAMT() {
       
       var time = DateTime.Now;
-      ImmutableCollections.HashMaps.Test.Run();
-      ImmutableCollections.HashMaps.Test.Run2();
+      Maa.Data.Test.Run();
+      Maa.Data.Test.Run2();
       Console.WriteLine((DateTime.Now - time).TotalMilliseconds);
 
       Console.WriteLine("-------------------------------------");
 
       time = DateTime.Now;
-      ImmutableCollections.HashMaps.Test.Run();
-      ImmutableCollections.HashMaps.Test.Run2();
+      Maa.Data.Test.Run();
+      Maa.Data.Test.Run2();
       Console.WriteLine((DateTime.Now - time).TotalMilliseconds);
     }
 

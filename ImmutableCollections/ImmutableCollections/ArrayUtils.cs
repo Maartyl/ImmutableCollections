@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImmutableCollections {
+namespace Maa.Data {
   public static class ArrayUtils {
-    public static T[] Insert<T>(this T[] xs, int i, T x) {
+    public static T[] CopyInsertAt<T>(this T[] xs, int i, T x) {
       var tmp = new T[xs.Length + 1];
       Array.Copy(xs, 0, tmp, 0, i);
       tmp[i] = x;
@@ -14,7 +14,7 @@ namespace ImmutableCollections {
       return tmp;
     }
 
-    public static T[] Remove<T>(this T[] xs, int i) {
+    public static T[] CopyRemoveAt<T>(this T[] xs, int i) {
       var n = xs.Length - 1;
       var tmp = new T[n];
       Array.Copy(xs, 0, tmp, 0, i);
@@ -22,17 +22,17 @@ namespace ImmutableCollections {
       return tmp;
     }
 
-    public static T[] Slice<T>(this T[] xs, int i, int len) {
+    public static T[] CopySlice<T>(this T[] xs, int i, int len) {
       var tmp = new T[len];
       Array.Copy(xs, i, tmp, 0, len);
       return tmp;
     }
 
     public static T[] Copy<T>(this T[] xs) {
-      return Slice(xs, 0, xs.Length);
+      return CopySlice(xs, 0, xs.Length);
     }
 
-    public static T[] CopyAndSet<T>(this T[] xs, int i, T x) {
+    public static T[] CopySetAt<T>(this T[] xs, int i, T x) {
       var ret = xs.Copy();
       ret[i] = x;
       return ret;

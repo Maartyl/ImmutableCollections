@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Maa.Data;
 
 namespace ImmutableCollections.Vectors
 {
@@ -72,7 +73,7 @@ namespace ImmutableCollections.Vectors
                 N full;
                 if(next.Add(x, out full))
                 {
-                    nodes = nodes.Insert(nodes.Length, full);
+                    nodes = nodes.CopyInsertAt(nodes.Length, full);
                     if(nodes.Length == 32)
                     {
                         newfull = new Node<N> { children = nodes };

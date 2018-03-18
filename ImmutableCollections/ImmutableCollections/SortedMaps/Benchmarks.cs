@@ -17,7 +17,7 @@ namespace ImmutableCollections.SortedMaps
             var imsorteddict = ImmutableSortedDictionary<int, int>.Empty;
             var imdict = ImmutableDictionary<int, int>.Empty;
             var mutsorteddict = new SortedDictionary<int, int>();
-            var hamt = HashMaps.HAMT<int, int>.Empty;
+      var hamt = Maa.Data.HAMT<int, int>.Empty;
             int v;
 
 
@@ -57,7 +57,7 @@ namespace ImmutableCollections.SortedMaps
 
             Benchmark.Time("HAMT", () =>
             {
-                hamt = HashMaps.HAMT<int, int>.Empty;
+          hamt = Maa.Data.HAMT<int, int>.Empty;
                 for (int i = 0; i < size; i++) hamt = hamt.Assoc(i, i);
             });
 
@@ -67,7 +67,7 @@ namespace ImmutableCollections.SortedMaps
             imsorteddict = ImmutableSortedDictionary<int, int>.Empty;
             imdict = ImmutableDictionary<int, int>.Empty;
             mutsorteddict = new SortedDictionary<int, int>();
-            hamt = HashMaps.HAMT<int, int>.Empty;
+      hamt = Maa.Data.HAMT<int, int>.Empty;
 
             Benchmark.Memory("Collections.ImmutableSortedDictionary", () =>
             {

@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using Maa.Data;
 
 namespace ImmutableCollections.SortedMaps {
   struct BTree<K,V> where K : IComparable<K> {
@@ -73,16 +74,16 @@ namespace ImmutableCollections.SortedMaps {
           C childSplitNode;
 
           if(c.Set(key, val, out childSplitKey, out childSplitNode)) {
-            keys = keys.Insert(i, childSplitKey);
-            children = children.Insert(i + 1, childSplitNode);
+            keys = keys.CopyInsertAt(i, childSplitKey);
+            children = children.CopyInsertAt(i + 1, childSplitNode);
             children[i] = c;
             if(keys.Length > MaxSize) {
               // inefficient? this copies arrays that were just copied
               splitKey = keys[MinSize];
-              var leftKeys = keys.Slice(0, MinSize);
-              var rightKeys = keys.Slice(MinSize + 1, MinSize);
-              var leftChildren = children.Slice(0, MinSize + 1);
-              var rightChildren = children.Slice(MinSize + 1, MinSize + 1);
+              var leftKeys = keys.CopySlice(0, MinSize);
+              var rightKeys = keys.CopySlice(MinSize + 1, MinSize);
+              var leftChildren = children.CopySlice(0, MinSize + 1);
+              var rightChildren = children.CopySlice(MinSize + 1, MinSize + 1);
               keys = leftKeys;
               children = leftChildren;
               splitNode = new Node<C>{ keys = rightKeys, children = rightChildren };
@@ -119,15 +120,15 @@ namespace ImmutableCollections.SortedMaps {
           C childSplitNode;
 
           if(children[i].MutateSet(key, val, out childSplitKey, out childSplitNode)) {
-            keys = keys.Insert(i, childSplitKey);
-            children = children.Insert(i + 1, childSplitNode);
+            keys = keys.CopyInsertAt(i, childSplitKey);
+            children = children.CopyInsertAt(i + 1, childSplitNode);
             if(keys.Length > MaxSize) {
               // inefficient? this copies arrays that were just copied
               splitKey = keys[MinSize];
-              var leftKeys = keys.Slice(0, MinSize);
-              var rightKeys = keys.Slice(MinSize + 1, MinSize);
-              var leftChildren = children.Slice(0, MinSize + 1);
-              var rightChildren = children.Slice(MinSize + 1, MinSize + 1);
+              var leftKeys = keys.CopySlice(0, MinSize);
+              var rightKeys = keys.CopySlice(MinSize + 1, MinSize);
+              var leftChildren = children.CopySlice(0, MinSize + 1);
+              var rightChildren = children.CopySlice(MinSize + 1, MinSize + 1);
               keys = leftKeys;
               children = leftChildren;
               splitNode = new Node<C> { keys = rightKeys, children = rightChildren };
