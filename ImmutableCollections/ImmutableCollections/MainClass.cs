@@ -93,15 +93,15 @@ namespace ImmutableCollections {
     static void simpleHAMT() {
       
       var time = DateTime.Now;
-      Maa.Data.Test.Run();
-      Maa.Data.Test.Run2();
+      Maa.Data.HamtTest.Run();
+      Maa.Data.HamtTest.Run2();
       Console.WriteLine((DateTime.Now - time).TotalMilliseconds);
 
       Console.WriteLine("-------------------------------------");
 
       time = DateTime.Now;
-      Maa.Data.Test.Run();
-      Maa.Data.Test.Run2();
+      Maa.Data.HamtTest.Run();
+      Maa.Data.HamtTest.Run2();
       Console.WriteLine((DateTime.Now - time).TotalMilliseconds);
     }
 

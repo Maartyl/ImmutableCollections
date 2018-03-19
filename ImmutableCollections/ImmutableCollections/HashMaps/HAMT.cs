@@ -32,19 +32,19 @@ namespace Maa.Data {
 
   //represents immutable hash map
   // - abstract class, so I can define general operators on it
-  public abstract class Map<TK,TV> {
-    public abstract Map<TK,TV> Assoc(TK k, TV v);
+  public abstract class Map<TK, TV> {
+    public abstract Map<TK, TV> Assoc(TK k, TV v);
 
-    public abstract Map<TK,TV> Dissoc(TK k);
+    public abstract Map<TK, TV> Dissoc(TK k);
 
     public abstract Opt<TV> ValueAt(TK k);
 
-    public virtual Map<TK,TV> Update<TCtx>(TK k, Func<TCtx, Opt<TV>, Opt<TV>> updater, TCtx ctx, IEqualityComparer<TV> eqComparerT) {
+    public virtual Map<TK, TV> Update<TCtx>(TK k, Func<TCtx, Opt<TV>, Opt<TV>> updater, TCtx ctx, IEqualityComparer<TV> eqComparerT) {
       //simple reference nonoptimized implementation
       var origOpt = ValueAt(k);
       return updater(ctx, origOpt).Match(v => {
-        if(origOpt) {
-          if(eqComparerT.Equals(v, origOpt.ValueOrDefault))
+        if (origOpt) {
+          if (eqComparerT.Equals(v, origOpt.ValueOrDefault))
             return this; //already contains the same value
         }
         return Assoc(k, v);
@@ -55,14 +55,14 @@ namespace Maa.Data {
 
     #region impls + defaults
 
-    public Map<TK,TV> Update<TCtx>(TK k, Func<TCtx, Opt<TV>, Opt<TV>> updater, TCtx ctx) {
+    public Map<TK, TV> Update<TCtx>(TK k, Func<TCtx, Opt<TV>, Opt<TV>> updater, TCtx ctx) {
       return Update(k, updater, ctx, EqualityComparer<TV>.Default);
     }
 
-    public Map<TK,TV> Update(TK k, Func<Opt<TV>, Opt<TV>> updater) {
-      if(updater == null)
+    public Map<TK, TV> Update(TK k, Func<Opt<TV>, Opt<TV>> updater) {
+      if (updater == null)
         throw new ArgumentNullException("updater");
-      
+
       return Update(k, (f, o) => f(o), updater); //don't create another closure to wrap - use context for fn itself
     }
 
@@ -71,14 +71,55 @@ namespace Maa.Data {
 
   }
 
-  struct HAMT<K, V> {
+  public struct HAMT<K, V> {
+    //size of HAMT struct: 2x ptr,2x int
     TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
 
     #region API
 
+    //TODO: wrapper CLASS with the ~same API, but mabe also counted etc. (counted would require changes to Assoc and Dissoc impls...)
+    // - this is still a struct: not ideal for passing around...
+
     //short bracket notation for most common operations
-    public Opt<V> this[K key]{ get { return ValueAt(key); } }
-    public HAMT<K, V> this[K key, V value]{ get { return Assoc(key, value); } }
+    public Opt<V> this[K key] { get { return ValueAt(key); } }
+
+    public HAMT<K, V> this[K key, V value] { get { return Assoc(key, value); } }
+
+    public static HAMT<K, V> operator -(HAMT<K, V> m, K k) {
+      return m.Dissoc(k);
+    }
+
+    #region update
+    public HAMT<K, V> Update<TCtx>(K k, Func<TCtx, Opt<V>, Opt<V>> updater, TCtx ctx, IEqualityComparer<V> eqComparerT) {
+      //simple reference nonoptimized implementation
+      var origOpt = ValueAt(k);
+      var self = this;
+      return updater(ctx, origOpt).Match(v => {
+        if (origOpt) {
+          if (eqComparerT.Equals(v, origOpt.ValueOrDefault))
+            return self; //already contains the same value
+        }
+        return self.Assoc(k, v);
+      }, () => origOpt ? self.Dissoc(k) : self);
+    }
+
+
+
+    #region impls + defaults
+
+    public HAMT<K, V> Update<TCtx>(K k, Func<TCtx, Opt<V>, Opt<V>> updater, TCtx ctx) {
+      return Update(k, updater, ctx, EqualityComparer<V>.Default);
+    }
+
+    public HAMT<K, V> Update(K k, Func<Opt<V>, Opt<V>> updater) {
+      if (updater == null)
+        throw new ArgumentNullException("updater");
+
+      return Update(k, (f, o) => f(o), updater); //don't create another closure to wrap - use context for fn itself
+    }
+
+    #endregion
+    #endregion
 
     public bool TryGetValue(K key, out V value) {
       return trie.TryGetValue(key, hashOf(key), out value);
@@ -101,7 +142,7 @@ namespace Maa.Data {
 
       var h = hashOf(key);
       var replace = self.trie.UpdateDissoc(key, h);
-      if(replace) { //only top node can contain single entery - tried to replace itself, but no higher level
+      if (replace) { //only top node can contain single entery - tried to replace itself, but no higher level
         self = Empty;
         self.trie.UpdateAssoc(replace.ValueOrDefault, h);
       }
@@ -113,8 +154,14 @@ namespace Maa.Data {
       trie.DebugInspectPrint();
     }
 
-    public IEnumerable<KeyValuePair<K,V>> Enumerate(){
+    public IEnumerable<KeyValuePair<K, V>> Enumerate() {
       return trie.Enumerate();
+    }
+
+    public HAMT<K, V> MapValues(Func<KeyValuePair<K, V>, V> mapper) {
+      var self = this;
+      self.trie.UpdateMapValues(mapper);
+      return self;
     }
 
     ///struct: same as new
@@ -131,20 +178,33 @@ namespace Maa.Data {
       return v == null ? 0 : v.GetHashCode();
     }
 
-    // TODO:
-    //   probably not: try inlining bit calculations
+    static KeyValuePair<K, V>[] mapValueArr(Func<KeyValuePair<K, V>, V> mapper, KeyValuePair<K, V>[] kvs) {
+      //assumes valid args (not null etc.)
+
+      var len = kvs.Length;
+      var mapped = new KeyValuePair<K, V>[len];
+      for (int i = 0; i < len; i++) {
+        mapped[i] = new KeyValuePair<K, V>(kvs[i].Key, mapper(kvs[i]));
+      }
+      return mapped;
+    }
+
     interface IHashTrieNode {
       bool TryGetValue(K key, int hash, out V value);
 
-      void UpdateAssoc(KeyValuePair<K,V> kv, int hash);
+      void UpdateAssoc(KeyValuePair<K, V> kv, int hash);
 
       //returns: none -> keep child; KV -> replace child with entry (only 1 entry in subtree left)
       // - if KV: you must replace: cannot assume it's updated to only hold one
-      Opt<KeyValuePair<K,V>> UpdateDissoc(K k, int hash);
+      Opt<KeyValuePair<K, V>> UpdateDissoc(K k, int hash);
 
-      void Init2(KeyValuePair<K,V> kv1, int hash1, KeyValuePair<K,V> kv2, int hash2);
+      void Init2(KeyValuePair<K, V> kv1, int hash1, KeyValuePair<K, V> kv2, int hash2);
 
-      IEnumerable<KeyValuePair<K,V>> Enumerate();
+      IEnumerable<KeyValuePair<K, V>> Enumerate();
+
+      //will not change shape of tree or any keys
+      // - only maps values - costs single copy of entire tree (many assocs would be much more expensive)
+      void UpdateMapValues(Func<KeyValuePair<K, V>, V> mapper);
 
 
       //TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
@@ -156,7 +216,8 @@ namespace Maa.Data {
       void DebugInspectPrint();
     }
 
-    struct TrieNode<Child> : IHashTrieNode where Child : IHashTrieNode, new() {
+    struct TrieNode<Child> : IHashTrieNode where Child : struct, IHashTrieNode {
+      /*, new()*/
       int childrenbitmap;
       int entriesbitmap;
 
@@ -165,11 +226,11 @@ namespace Maa.Data {
 
       public bool TryGetValue(K key, int hash, out V value) {
         int bit = ComputeBit(hash);
-        if((bit & childrenbitmap) != 0) {
+        if ((bit & childrenbitmap) != 0) {
           return children[ComputeIndex(bit, childrenbitmap)].TryGetValue(key, hash, out value);
-        } else if((bit & entriesbitmap) != 0) {
+        } else if ((bit & entriesbitmap) != 0) {
           var kv = entries[ComputeIndex(bit, entriesbitmap)];
-          if(eq(kv.Key, key)) {
+          if (eq(kv.Key, key)) {
             value = kv.Value;
             return true;
           }
@@ -178,25 +239,19 @@ namespace Maa.Data {
         return false;
       }
 
-      public void UpdateAssoc(KeyValuePair<K,V> kv, int hash) {
+      public void UpdateAssoc(KeyValuePair<K, V> kv, int hash) {
         int bit = ComputeBit(hash);
-        if((bit & childrenbitmap) != 0) {
-          //speed is not as important as corectness <- readability
-
-          //var tmp = new Child[children.Length];
-          //Array.Copy(children, tmp, children.Length);
-          children = children.Copy(); //maa: remove 'inlining' - use ArrayUtils
+        if ((bit & childrenbitmap) != 0) {
+          children = children.Copy();
           children[ComputeIndex(bit, childrenbitmap)].UpdateAssoc(kv, hash);
-        } else if((bit & entriesbitmap) != 0) {
+        } else if ((bit & entriesbitmap) != 0) {
           int i = ComputeIndex(bit, entriesbitmap);
           var ent = entries[i];
-          if(eq(ent.Key, kv.Key)) {
-            //orig // - YUP: I tested it: I noticed right: it was wrong - did mutate original map
-            //entries[i] = new KeyValuePair<K,V>(key, value);
+          if (eq(ent.Key, kv.Key)) {
             entries = entries.CopySetAt(i, kv);
           } else {
             int j = 0;
-            if(children == null)
+            if (children == null)
               children = new Child[1];
             else {
               j = ComputeIndex(bit, childrenbitmap);
@@ -208,11 +263,11 @@ namespace Maa.Data {
             entriesbitmap &= ~bit;
           }
         } else {
-          entriesbitmap |= bit; //why is this no different? what is correct? ...
+          entriesbitmap |= bit; //why is this the same as setting after ComputeIndex?
           // - must match index I'm looking for, so...
           // OOH! it deoes NOT matter: only computes from bits LOWER than bit, so if bit set or not doesn't matter...
           // - whow, that's ... pretty cool, actually...
-          if(entries == null)
+          if (entries == null)
             entries = new[] { kv };
           else
             entries = entries.CopyInsertAt(ComputeIndex(bit, entriesbitmap), kv);
@@ -220,19 +275,19 @@ namespace Maa.Data {
         }
       }
 
-      public Opt<KeyValuePair<K,V>> UpdateDissoc(K key, int hash) {
+      public Opt<KeyValuePair<K, V>> UpdateDissoc(K key, int hash) {
         int bit = ComputeBit(hash);
-        if((bit & childrenbitmap) != 0) {
+        if ((bit & childrenbitmap) != 0) {
           var i = ComputeIndex(bit, childrenbitmap);
           var tmp = children[i];
           var replace = tmp.UpdateDissoc(key, hash);
-          if(replace) {
-            if(bit == childrenbitmap && entriesbitmap == 0)
+          if (replace) {
+            if (bit == childrenbitmap && entriesbitmap == 0)
               return replace; //was sole child and no entries: replace myself
             else {
               //collapse of child into entry
 
-              if(bit == childrenbitmap) {
+              if (bit == childrenbitmap) {
                 childrenbitmap = 0;
                 children = null;
               } else {
@@ -245,20 +300,20 @@ namespace Maa.Data {
               return Opt.NoneAny; //keep me
             }
           } else {
-            //keep tmp as child
+            //keep tmp as child - did not ask to be replaced
             children = children.CopySetAt(i, tmp);
             return Opt.NoneAny; //keep me
           }
-        } else if((bit & entriesbitmap) != 0) {
+        } else if ((bit & entriesbitmap) != 0) {
           var i = ComputeIndex(bit, entriesbitmap);
           var kv = entries[i];
-          if(eq(kv.Key, key)) {
-            if(bit != entriesbitmap) { //common case: multiple entries, just remove
+          if (eq(kv.Key, key)) {
+            if (bit != entriesbitmap) { //common case: multiple entries, just remove
               entriesbitmap &= ~bit;
               entries = entries.CopyRemoveAt(i);
               return Opt.NoneAny; //keep me
             } else { //is sole entry
-              if(childrenbitmap == 0) { //no children
+              if (childrenbitmap == 0) { //no children
                 return kv; //replace myself
               } else {
                 entriesbitmap = 0;
@@ -277,10 +332,10 @@ namespace Maa.Data {
         }
       }
 
-      public void Init2(KeyValuePair<K,V> kv1, int hash1, KeyValuePair<K,V> kv2, int hash2) {
+      public void Init2(KeyValuePair<K, V> kv1, int hash1, KeyValuePair<K, V> kv2, int hash2) {
         var bit1 = ComputeBit(hash1);
         var bit2 = ComputeBit(hash2);
-        if(bit1 == bit2) {
+        if (bit1 == bit2) {
           childrenbitmap = bit1;
           children = new Child[1];
           children[0].Init2(kv1, hash1, kv2, hash2);
@@ -292,15 +347,26 @@ namespace Maa.Data {
         }
       }
 
-      public IEnumerable<KeyValuePair<K,V>> Enumerate() {
-        if(entries != null)
-          foreach(var e in entries)
+      public IEnumerable<KeyValuePair<K, V>> Enumerate() {
+        if (entries != null)
+          foreach (var e in entries)
             yield return e;
-  
-        if(children != null) //there's surely a faster way to do this, but this one is fine for now
-          foreach(var c in children)
-            foreach(var e in c.Enumerate())
+
+        if (children != null) //there's surely a faster way to do this, but this one is fine for now
+          foreach (var c in children)
+            foreach (var e in c.Enumerate())
               yield return e;
+      }
+
+      public void UpdateMapValues(Func<KeyValuePair<K, V>, V> mapper) {
+        if (entries != null)
+          entries = mapValueArr(mapper, entries);
+        if (children != null) {
+          children = children.Copy();
+          for (int i = 0; i < children.Length; i++) {
+            children[i].UpdateMapValues(mapper);
+          }
+        }
       }
 
       public int GetNodeDepth() {
@@ -329,9 +395,9 @@ namespace Maa.Data {
       #region debug
 
       static void dbgLn(string s) {
-        if(s == null)
+        if (s == null)
           s = "";
-        
+
         var indent = new string(' ', depth / 5);
 
         Console.Write(indent);
@@ -339,25 +405,25 @@ namespace Maa.Data {
       }
 
       public void DebugInspectPrint() {
-        if(entriesbitmap != 0) {
+        if (entriesbitmap != 0) {
           dbgLn("entries " + dbgHash(entriesbitmap));
         } else {
           dbgLn("entries none");
         }
 
-        if(entries != null)
-          foreach(var e in entries)
+        if (entries != null)
+          foreach (var e in entries)
             dbgLn("." + dbgHash(hashOf(e.Key)) + " ; " + e.Key);
 
-        if(childrenbitmap != 0)
+        if (childrenbitmap != 0)
           dbgLn("children " + dbgHash(childrenbitmap));
         else
           dbgLn("children none");
 
-        if(children != null)
-          for(int i = 0; i < 32; i++) {
+        if (children != null)
+          for (int i = 0; i < 32; i++) {
             var bit = (1 << i);
-            if((bit & childrenbitmap) != 0) {
+            if ((bit & childrenbitmap) != 0) {
               dbgLn("child " + binI5(i));
               children[ComputeIndex(bit, childrenbitmap)].DebugInspectPrint();
             }
@@ -374,13 +440,13 @@ namespace Maa.Data {
 
       KeyValuePair<K, V>[] entries;
 
-      public void Init2(KeyValuePair<K,V> kv1, int hash1, KeyValuePair<K,V> kv2, int hash2) {
+      public void Init2(KeyValuePair<K, V> kv1, int hash1, KeyValuePair<K, V> kv2, int hash2) {
         entries = new[] { kv1, kv2 };
       }
 
       public bool TryGetValue(K key, int hash, out V value) {
-        foreach(var kv in entries) {
-          if(eq(kv.Key, key)) {
+        foreach (var kv in entries) {
+          if (eq(kv.Key, key)) {
             value = kv.Value;
             return true;
           }
@@ -390,31 +456,31 @@ namespace Maa.Data {
       }
 
       public void UpdateAssoc(KeyValuePair<K, V> kvNew, int hash) {
-        if(entries == null) { //not possible inside tree; only when Bucket used for small maps
-          entries = new []{ kvNew };
+        if (entries == null) { //not possible inside tree; only when Bucket used for small maps
+          entries = new[] { kvNew };
           return;
         }
-          
+
         var indexToReplace = findIndex(kvNew.Key);
 
-        entries = indexToReplace < 0 
+        entries = indexToReplace < 0
           ? entries.CopyInsertAt(0, kvNew) //add ;; also to start: doesn't matter and last inserted might be most likely to be searched for
           : entries.CopySetAt(indexToReplace, kvNew);
       }
 
-      public Opt<KeyValuePair<K,V>> UpdateDissoc(K k, int hash) {
-        if(entries == null)
+      public Opt<KeyValuePair<K, V>> UpdateDissoc(K k, int hash) {
+        if (entries == null)
           return Opt.NoneAny; //not possible inside tree; only when Bucket used for small maps
 
         var indexToRemove = findIndex(k);
 
-        if(indexToRemove < 0)
+        if (indexToRemove < 0)
           return Opt.NoneAny; //not found: keep me as I am
 
-        if(entries.Length == 2)
+        if (entries.Length == 2)
           return entries[indexToRemove == 0 ? 1 : 0]; //return other than removed to replace self with
 
-        if(entries.Length == 1) { //not possible inside tree; only when Bucket used for small maps
+        if (entries.Length == 1) { //not possible inside tree; only when Bucket used for small maps
           entries = null; //was single: removed to null
           return Opt.NoneAny;
         }
@@ -427,30 +493,35 @@ namespace Maa.Data {
         //ASSUMPTION: entries != null
 
         var len = entries.Length;
-        for(int i = 0; i < len; i++)
-          if(eq(entries[i].Key, k))
+        for (int i = 0; i < len; i++)
+          if (eq(entries[i].Key, k))
             return i;
 
         return -1;
       }
 
-      public IEnumerable<KeyValuePair<K,V>> Enumerate() {
-        return entries ?? System.Linq.Enumerable.Empty<KeyValuePair<K,V>>();
+      public IEnumerable<KeyValuePair<K, V>> Enumerate() {
+        return entries ?? System.Linq.Enumerable.Empty<KeyValuePair<K, V>>();
+      }
+
+      public void UpdateMapValues(Func<KeyValuePair<K, V>, V> mapper) {
+        if (entries != null)
+          entries = mapValueArr(mapper, entries);
       }
 
       public void DebugInspectPrint() {
         var len = 0;
-        if(entries != null)
+        if (entries != null)
           len = entries.Length;
-        
-        dbgLn("bucket #" + len); 
 
-        foreach(var e in entries)
+        dbgLn("bucket #" + len);
+
+        foreach (var e in entries)
           dbgLn("" + e.Key);
       }
 
       static void dbgLn(string s) {
-        if(s == null)
+        if (s == null)
           s = "";
 
         var indent = new string(' ', 35 / 5);
@@ -467,7 +538,7 @@ namespace Maa.Data {
 
     static string binI5(int h) {
       var bin = Convert.ToString(h, 2);
-      if(bin.Length >= 5)
+      if (bin.Length >= 5)
         return bin;
       return new string('0', 5 - bin.Length) + bin;
     }
@@ -477,14 +548,14 @@ namespace Maa.Data {
       // - thus initialization not checked during actual algorithm
       // -- I don't think it would, but adding this does not hurt
 
-      if(Empty.trie.GetNodeDepth() != 0)
+      if (Empty.trie.GetNodeDepth() != 0)
         throw new InvalidProgramException("TrieMap top level NodeDepth must be 0; is: " + Empty.trie.GetNodeDepth());
     }
 
     #endregion
   }
 
-  public struct Test {
+  public struct HamtTest {
     public static void Run() {
       var h = HAMT<int, int>.Empty;
 
@@ -495,11 +566,11 @@ namespace Maa.Data {
       //11100101011111011111
       //11100101011111111111
 
-      for(int i = (offset + 0); i < (offset + 10 * size); i++) {
+      for (int i = (offset + 0); i < (offset + 10 * size); i++) {
         h = h.Assoc(i, i);
 
         int v;
-        if(!h.TryGetValue(i, out v)) {
+        if (!h.TryGetValue(i, out v)) {
           Console.WriteLine("E1: {0} has no value", i);
 
           h.DebugInspectPrint();
@@ -510,7 +581,7 @@ namespace Maa.Data {
 
           hx.DebugInspectPrint();
 
-          if(hx.TryGetValue(i, out v)) {
+          if (hx.TryGetValue(i, out v)) {
             Console.WriteLine("E1: {0} after second assoc: {1}", i, v);
           } else {
             Console.WriteLine("E1: {0} has no value even after second Assoc", i);
@@ -523,41 +594,41 @@ namespace Maa.Data {
         }
       }
 
-//      h.DebugInspectPrint();
-//      return;
+      //      h.DebugInspectPrint();
+      //      return;
 
       var _ = h[5, 8][6, 7][5].ValueOrDefault;
 
-      for(int i = (offset + 0); i < (offset + 5 * size); i++) {
+      for (int i = (offset + 0); i < (offset + 5 * size); i++) {
         h = h.Assoc(i, -i);
       }
 
-      for(int i = (offset + 0); i < (offset + 10 * size); i++) {
+      for (int i = (offset + 0); i < (offset + 10 * size); i++) {
         int v;
-        if(!h.TryGetValue(i, out v)) {
+        if (!h.TryGetValue(i, out v)) {
           Console.WriteLine("Error: {0} has no value", i);
 
-          if(h.Assoc(i, i).TryGetValue(i, out v)) {
+          if (h.Assoc(i, i).TryGetValue(i, out v)) {
             Console.WriteLine("Error: {0} after second assoc: {1}", i, v);
           } else {
             Console.WriteLine("Error: {0} has no value even after second Assoc", i);
           }
           continue;
         }
-        if((i < (offset + 5 * size) && v != -i) || (i >= (offset + 5 * size) && v != i))
+        if ((i < (offset + 5 * size) && v != -i) || (i >= (offset + 5 * size) && v != i))
           Console.WriteLine("Error: {0} returned {1}", i, v);
       }
 
-      for(int i = (offset + 1 + 10 * size); i < (offset + 20 * size); i++) {
+      for (int i = (offset + 1 + 10 * size); i < (offset + 20 * size); i++) {
         int v;
-        if(h.TryGetValue(i, out v))
+        if (h.TryGetValue(i, out v))
           Console.WriteLine("Error: {0} shouldn't be present; is: {1}", i, v);
       }
 
       Console.WriteLine("End");
     }
 
-    public  static void Run2() {
+    public static void Run2() {
       var h = HAMT<int, int>.Empty;
 
       const int last = 31;
@@ -589,5 +660,11 @@ namespace Maa.Data {
       Console.WriteLine("last + (3 << 5): {0}", x);
 
     }
+
+    //TODO: run correctness tests
+    // - run dissoc, assoc, enumerate, ...
+    // - run performance tests (compared to Dictionary .... I guess that's all I care about)
+
+
   }
 }
