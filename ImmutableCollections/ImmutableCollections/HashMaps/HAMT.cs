@@ -667,7 +667,6 @@ namespace Maa.Data {
 
     //TODO: run correctness tests
     // - run dissoc, assoc, enumerate, ...
-    // - run performance tests (compared to Dictionary .... I guess that's all I care about)
 
     public static void Dissoc(int rep) {
       var r = new Random(78945611); //seed, so test is repeatable
@@ -729,7 +728,45 @@ namespace Maa.Data {
       //h.DebugInspectPrint();
     }
 
-    public static void Random() {
+    public static void Inspect() {
+      var h = default(HAMT<int, int>);
+      var r = new Random(456773);
+
+      const int start = int.MinValue;
+      const int size = 500;
+      for (int i = start; i < start + size; i++) {
+        h = h[i, -i];
+      }
+
+      // h = (h - 0 - 33 - 34)[33,42];
+
+      h = h
+        //- -2147483617
+        - -2147483585
+        - -2147483553
+        - -2147483521
+        - -2147483489
+        - -2147483457
+        - -2147483425
+        - -2147483393
+        - -2147483361
+        - -2147483329
+        - -2147483297
+        - -2147483265
+        - -2147483233
+        - -2147483201
+        - -2147483169
+        //        [(33 << 5) + 33, 1]
+        //        [(33 << 10) + 33, 2]
+        //        [(33 << 10) + 29, 2]
+        //        [1,-1]
+        //        [2,-1]
+        //        [3,-1]
+        //        [4,-1]
+
+        ;
+
+      h.DebugInspectPrint();
     }
   }
 }
