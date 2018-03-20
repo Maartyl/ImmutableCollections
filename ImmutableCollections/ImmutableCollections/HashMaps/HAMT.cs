@@ -51,8 +51,6 @@ namespace Maa.Data {
       }, () => origOpt ? Dissoc(k) : this);
     }
 
-
-
     #region impls + defaults
 
     public Map<TK, TV> Update<TCtx>(TK k, Func<TCtx, Opt<TV>, Opt<TV>> updater, TCtx ctx) {
@@ -66,12 +64,11 @@ namespace Maa.Data {
       return Update(k, (f, o) => f(o), updater); //don't create another closure to wrap - use context for fn itself
     }
 
-    #endregion
-
-
+    #endregion impls + defaults
   }
 
   public struct HAMT<K, V> {
+
     //size of HAMT struct: 2x ptr,2x int
     TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
 
@@ -103,8 +100,6 @@ namespace Maa.Data {
       }, () => origOpt ? self.Dissoc(k) : self);
     }
 
-
-
     #region impls + defaults
 
     public HAMT<K, V> Update<TCtx>(K k, Func<TCtx, Opt<V>, Opt<V>> updater, TCtx ctx) {
@@ -118,8 +113,8 @@ namespace Maa.Data {
       return Update(k, (f, o) => f(o), updater); //don't create another closure to wrap - use context for fn itself
     }
 
-    #endregion
-    #endregion
+    #endregion impls + defaults
+    #endregion update
 
     public bool TryGetValue(K key, out V value) {
       return trie.TryGetValue(key, hashOf(key), out value);
@@ -167,7 +162,7 @@ namespace Maa.Data {
     ///struct: same as new
     public static readonly HAMT<K, V> Empty = new HAMT<K, V>();
 
-    #endregion
+    #endregion API
 
     #region implementation
 
@@ -205,7 +200,6 @@ namespace Maa.Data {
       //will not change shape of tree or any keys
       // - only maps values - costs single copy of entire tree (many assocs would be much more expensive)
       void UpdateMapValues(Func<KeyValuePair<K, V>, V> mapper);
-
 
       //TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<TrieNode<Bucket>>>>>>> trie;
       // - originally: top started with 0, then each additional added 5
@@ -308,17 +302,28 @@ namespace Maa.Data {
           var i = ComputeIndex(bit, entriesbitmap);
           var kv = entries[i];
           if (eq(kv.Key, key)) {
-            if (bit != entriesbitmap) { //common case: multiple entries, just remove
+            if (entries.Length > 2) { //common case: multiple entries, just remove
               entriesbitmap &= ~bit;
               entries = entries.CopyRemoveAt(i);
               return Opt.NoneAny; //keep me
-            } else { //is sole entry
-              if (childrenbitmap == 0) { //no children
-                return kv; //replace myself
+            } else { //sole entry will remain
+              if (childrenbitmap == 0) { //no children - replace myself
+                //I know there cannot be more than 2 children
+                //it's impossible to have no children and only single entry
+                // -> must be 2
+                //; replace myself with other
+
+                return entries[i == 0 ? 1 : 0];
               } else {
-                entriesbitmap = 0;
-                entries = null;
-                return Opt.NoneAny; //keep me
+                if (entriesbitmap == bit) { //must have been a single entry, but I still have children
+                  entriesbitmap = 0;
+                  entries = null;
+                  return Opt.NoneAny; //keep me
+                } else { //has children and there were multiple entries (2) - keep the other
+                  entriesbitmap &= ~bit;
+                  entries = entries.CopyRemoveAt(i);
+                  return Opt.NoneAny; //keep me
+                }
               }
             }
           } else {
@@ -430,7 +435,7 @@ namespace Maa.Data {
           }
       }
 
-      #endregion
+      #endregion debug
     }
 
     struct Bucket : IHashTrieNode {
@@ -552,7 +557,7 @@ namespace Maa.Data {
         throw new InvalidProgramException("TrieMap top level NodeDepth must be 0; is: " + Empty.trie.GetNodeDepth());
     }
 
-    #endregion
+    #endregion implementation
   }
 
   public struct HamtTest {
@@ -658,13 +663,73 @@ namespace Maa.Data {
 
       h.TryGetValue(last + (3 << 5), out x);
       Console.WriteLine("last + (3 << 5): {0}", x);
-
     }
 
     //TODO: run correctness tests
     // - run dissoc, assoc, enumerate, ...
     // - run performance tests (compared to Dictionary .... I guess that's all I care about)
 
+    public static void Dissoc(int rep) {
+      var r = new Random(78945611); //seed, so test is repeatable
 
+      for (int i = 0; i < rep; i++) {
+        Dissoc1(r.Next());
+      }
+    }
+
+    public static void Dissoc1(int seed) {
+      var h = default(HAMT<int, int>);
+      var r = new Random(seed); //seed, so test is repeatable
+
+      const int size = 4000; //100000
+      // const int offset = 939997;
+      int offset = unchecked(seed - size);
+      // 939999
+
+      for (int i = (offset + 0); i < (offset + 10 * size); i++) {
+        h = h[i, i];
+      }
+
+      int delets = size * 2;
+      while (delets-- > 0) {
+        var n = offset + r.Next(size / 2); // always keep half keys: then check all present
+        var opt = h[n];
+
+        if (opt) {
+          h = h - n;
+
+          if (opt.ValueOrDefault != n) {
+            Console.WriteLine("Error: {0} returned {1}", n, opt.ValueOrDefault);
+          }
+
+          opt = h[n];
+          if (opt) {
+            h.DebugInspectPrint();
+            Console.WriteLine("E: {0} not removed after Dissoc; is: {1}", n, opt.ValueOrDefault);
+            return;
+          }
+        }
+      }
+
+      Console.WriteLine("Dissoc part passed");
+
+      //part that should stay unchanged
+      for (int i = offset + (size / 2 + 1); i < offset + size; i++) {
+        var opt = h[i];
+        if (opt) {
+          if (opt.ValueOrDefault != i)
+            Console.WriteLine("Error: {0} returned {1}", i, opt.ValueOrDefault);
+        } else {
+          Console.WriteLine("Error: {0} not present after dissoc test", i);
+        }
+      }
+
+      Console.WriteLine("End " + seed);
+
+      //h.DebugInspectPrint();
+    }
+
+    public static void Random() {
+    }
   }
 }
